@@ -1,0 +1,118 @@
+#! /usr/local/bin/ruby
+require 'open-uri'
+require 'rexml/document'
+require 'net/smtp'
+require 'nkf'
+include REXML
+
+area_id = 23
+keywords = [
+  'ラーメン',
+  'ジョブズ',
+]
+
+smtp_host = 'smtp.gmail.com'
+smtp_port = 587
+smtp_user = 'xxxxxxxx@gmail.com'
+smtp_password = 'p@ssw0rd'
+mail_from = 'xxxxxxxx@gmail.com'
+mail_to = ['regza@example.com']
+
+regza_password = 'regza_password'
+
+platforms = {
+  '1' => {
+    '1' => 'D011-0',
+    '2' => 'D021-0',
+    '4' => 'D041-0',
+    '5' => 'D051-0',
+    '6' => 'D061-0',
+    '7' => 'D071-0',
+    '8' => 'D081-0',
+    '9' => 'D091-0',
+  },
+  '2' => {
+    '1' => 'BS101',
+    '2' => 'BS102',
+    '3' => 'BS103',
+    '4' => 'BS141',
+    '5' => 'BS151',
+    '6' => 'BS161',
+    '7' => 'BS171',
+    '8' => 'BS181',
+    '11' => 'BS211',
+    '12' => 'BS222',
+  }
+}
+  
+lines = []
+keywords.each do |keyword|
+  platforms.each do |id, channels|
+    url = 'http://tv.so-net.ne.jp/rss/schedulesBySearch.action?'
+    url += [
+      "stationPlatformId=#{id}",
+      "condition.keyword=#{URI.escape(keyword)}",
+      "stationAreaId=#{area_id}",
+    ].join('&')
+    puts "load \"#{url}\"..."
+    uri = URI.parse(url)
+    doc = Document.new uri.read
+    doc.get_elements('/rdf:RDF/item').select do |item|
+      title = XPath.first(item, 'title').text
+      link = XPath.first(item, 'link').text
+      desc = XPath.first(item, 'description').text
+      date = Time.parse(XPath.first(item, 'dc:date').text)
+      yyyymmdd = date.strftime('%Y%m%d')
+      found = false
+      if File::exist?(yyyymmdd)
+        File::open(yyyymmdd, "r") do |file|
+          while l = file.gets
+            if link == l.chomp
+              found = true
+              break
+            end
+          end
+        end
+      end
+      if !found
+        if /^([0-9]+\/[0-9]+) ([0-9]+):([0-9]+)[^0-9]+([0-9]+):([0-9]+) \[.*\(Ch.([0-9]+)\)\]$/ =~ desc
+          if channels.has_key?($6)
+            time_begin = format("%04d", $2 + $3)
+            time_end = format("%04d", $4 + $5)
+            channel = channels[$6]
+            command = "open #{regza_password} prog add #{yyyymmdd} #{time_begin} #{time_end} #{channel}"
+            lines << { :title => title, :keyword => keyword, :command => command }
+            File::open(yyyymmdd, "a") {|f| f.puts link }
+            puts "#{title} #{desc}"
+          end
+        end
+      end
+    end
+    sleep 1
+  end
+end
+
+if 0 < lines.size
+  puts "open smtp..."
+  smtp = Net::SMTP.new(smtp_host, smtp_port)
+  smtp.enable_starttls
+  smtp.start('localhost.localdomain', smtp_user, smtp_password, :plain) do |conn|
+    lines.each do |line|
+      puts "send \"#{line[:command]}\""
+      subject = NKF.nkf('-M', "[REC][#{keyword}] #{line[:title]}")
+      mail_data = <<EOS
+Date: #{Time::now.strftime("%a, %d %b %Y %X")}
+From: #{mail_from}
+To: #{mail_to.join(",")}
+Subject: #{subject}
+Mime-Version: 1.0
+Content-Type: text/plain; charaset=iso-2022-jp
+
+#{line[:command]}
+EOS
+      conn.send_mail(mail_data, mail_from, mail_to)
+      sleep 1
+    end
+  end
+  puts "close smtp"
+end
