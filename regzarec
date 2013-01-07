@@ -99,7 +99,7 @@ if 0 < lines.size
   smtp.start('localhost.localdomain', smtp_user, smtp_password, :plain) do |conn|
     lines.each do |line|
       puts "send \"#{line[:command]}\""
-      subject = NKF.nkf('-M', "[REC][#{keyword}] #{line[:title]}")
+      subject = NKF.nkf('-M', "[REC][#{line[:keyword]}] #{line[:title]}")
       mail_data = <<EOS
 Date: #{Time::now.strftime("%a, %d %b %Y %X")}
 From: #{mail_from}
